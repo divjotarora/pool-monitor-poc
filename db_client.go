@@ -4,26 +4,26 @@ import (
 	"context"
 	"fmt"
 
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/event"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type dbClient struct {
-	client      *mongo.Client
-	coll        *mongo.Collection
-	poolMonitor *poolMonitor
+	ID       primitive.ObjectID // the Client ID
+	client   *mongo.Client
+	coll     *mongo.Collection
+	numConns int
 }
 
 func newDbClient(ctx context.Context, uri string) (*dbClient, error) {
 	newClient := &dbClient{
-		poolMonitor: newPoolMonitor(),
+		ID: primitive.NewObjectID(),
 	}
 
-	// Having PoolMonitor be an interface would have made this a little esaier because we could have instead done
-	// SetPoolMonitor(newClient.poolMonitor).
 	monitor := &event.PoolMonitor{
-		Event: newClient.poolMonitor.HandleEvent,
+		Event: newClient.HandlePoolEvent,
 	}
 	clientOpts := options.Client().ApplyURI(uri).SetPoolMonitor(monitor)
 
@@ -37,6 +37,15 @@ func newDbClient(ctx context.Context, uri string) (*dbClient, error) {
 	return newClient, nil
 }
 
+func (d *dbClient) HandlePoolEvent(evt *event.PoolEvent) {
+	switch evt.Type {
+	case event.ConnectionCreated:
+		d.numConns++
+	case event.ConnectionClosed:
+		d.numConns--
+	}
+}
+
 func (d *dbClient) Close(ctx context.Context) {
 	_ = d.coll.Drop(ctx)
 	_ = d.client.Disconnect(ctx)
@@ -48,5 +57,5 @@ func (d *dbClient) Insert(ctx context.Context, document interface{}) error {
 }
 
 func (d *dbClient) PrintStats() {
-	fmt.Printf("Client Stats\nNum Connections Open: %d\n", d.poolMonitor.conns)
+	fmt.Printf("Client Stats\nNum Connections Open: %d\n", d.numConns)
 }
